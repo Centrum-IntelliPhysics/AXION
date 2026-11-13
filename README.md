@@ -93,7 +93,7 @@ python -m axion.distributed        # multi-GPU kernels on 4 emulated CPU devices
 @article{axion,
   title  = {Axion: A differentiable, GPU-native finite element framework,
             demonstrated on phase-field fracture},
-  author = {Wang, Wei and Krishnan U., Meenu and Graham-Brady, Lori and Goswami, Somdatta},
+  author = {Wang, Wei and Krishnan U., Meenu  and Graham-Brady, Lori and Goswami, Somdatta},
   note   = {W. Wang and M. Krishnan U. contributed equally},
   year   = {2026}
 }
