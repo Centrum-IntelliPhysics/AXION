@@ -21,29 +21,6 @@ tangent follows by forward-mode automatic differentiation; the load, staggered,
 Newton and CG loops are compiled into one GPU program that also runs on several
 GPUs. Bottom: the phase-field fracture problems solved in this work.*
 
-The element kernels, the Newton and Krylov iterations, the bound-constrained
-updates, the staggered coupling of fields and the loop over load increments are
-expressed as one program that is just-in-time compiled and executed on the GPU:
-
-```
-scan over load increments [ while staggered [ while Newton [ while CG ] ] ]
-```
-
-* **One element definition per field.** The user writes the weak form at a
-  quadrature point. The element residual and its consistent tangent come from
-  the same kernel; the tangent is obtained by forward-mode automatic
-  differentiation.
-* **Element-by-element operators.** Global operators are applied from the stored
-  element tangents (gather, local product, scatter-add) without assembling a
-  sparse matrix; linear systems are solved by Jacobi-preconditioned CG.
-* **Fixed array shapes, compiled control flow.** Bound constraints are enforced
-  by projection, adaptively refined meshes live in fixed-capacity buffers, and
-  a cell-based domain decomposition runs the same program on several GPUs.
-* **Differentiable.** Forward-mode derivatives of the discrete solution with
-  respect to model parameters are obtained by differentiating the same program.
-
-`axion/` is self-contained. It depends on JAX and NumPy (meshio for output) and
-does not use or import any other finite element library.
 
 ## Installation
 
