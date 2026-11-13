@@ -60,49 +60,6 @@ precision.
 The examples add the repository root to `sys.path` themselves, so no install
 step is needed; `pip install -e .` makes `import axion` available elsewhere.
 
-## A first example
-
-```python
-import jax.numpy as jnp
-import axion
-from axion import DirichletBC, Field, rectangle_mesh
-
-E, nu = 210e3, 0.3
-mu, lam = E / (2 * (1 + nu)), E * nu / ((1 + nu) * (1 - 2 * nu))
-
-class Elasticity(Field):
-    def flux(self):                       # paired with grad v
-        def stress(grad_u):
-            eps = 0.5 * (grad_u + grad_u.T)
-            return lam * jnp.trace(eps) * jnp.eye(2) + 2 * mu * eps
-        return stress
-
-mesh = rectangle_mesh(40, 40)             # unit square, QUAD4
-bottom = lambda x: jnp.isclose(x[1], 0.0)
-top = lambda x: jnp.isclose(x[1], 1.0)
-u = Elasticity(mesh, ncomp=2, dirichlet=[DirichletBC(bottom, 0), DirichletBC(bottom, 1),
-                                         DirichletBC(top, 1, 1e-3)])
-
-fixed, values = u.dirichlet_dofs, u.dirichlet_values
-z0 = jnp.zeros(u.num_dofs).at[fixed].set(values)
-R0, V0 = axion.assemble(u, z0)            # residual and element tangents (by AD)
-newton = axion.make_newton(u, tol=1e-8)   # compiled Newton + Jacobi-CG
-z = newton(z0, R0.at[fixed].set(0.0), V0, (), fixed)
-axion.write_vtu("elastic.vtu", mesh, point_data={"u": z.reshape(-1, 2)})
-```
-
-A weak form is declared through three hooks of `Field`, each returning a plain
-JAX function of the values at one quadrature point:
-
-| hook | signature | paired with |
-|---|---|---|
-| `flux()` | `fn(grad_z, *theta) -> (ncomp, dim)` | `grad v` in the cell |
-| `source()` | `fn(z, x, *theta) -> (ncomp,)` | `v` in the cell |
-| `boundary_sources()` | list of `fn(z, x, *theta_b) -> (ncomp,)` | `v` on each boundary |
-
-`theta` collects the data held fixed while the field is solved (material
-parameters, internal variables, the other fields), sampled at the quadrature
-points. Coupled problems are sets of fields solved in turn; see the examples.
 
 ## Repository layout
 
