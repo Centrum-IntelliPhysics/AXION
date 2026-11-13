@@ -1,0 +1,18 @@
+# conda env create -f environment.yml && conda activate axion
+#
+# This installs the CPU build of JAX. On a CUDA machine install the GPU wheel
+# afterwards, for example:  pip install -U "jax[cuda12]"
+name: axion
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - matplotlib
+  - h5py
+  - meshio
+  - pip
+  - pip:
+      - jax
+      - gmsh        # meshes of the hydraulic fracture and premolar examples
+      - pymetis     # METIS partition of the multi-GPU scaling example (optional)
