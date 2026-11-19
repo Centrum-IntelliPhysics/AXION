@@ -32,9 +32,6 @@ short range d_s of the sphere; its contribution to the tangent is obtained by
 automatic differentiation like the bulk terms. No crack, weak zone or preferred
 path is introduced.
 
-The loading schedule of the paper (increments of 0.004 mm, refined to 0.002 mm
-for delta in [0.164, 0.176] mm) is set in run_premolar.sh.
-
 Units: N, mm, MPa.
 """
 import json
@@ -88,37 +85,14 @@ E_PULP, NU_PULP = 2.0, 0.45
 E_PDL, NU_PDL = 10.0, 0.45
 E_CANCEL, NU_CANCEL = 1.37e3, 0.30
 E_CORT, NU_CORT = 13.7e3, 0.26
-# Fracture energy: MEASURED values (the aim is a realistic crack
-# pattern, not a replica of the PD paper's calibration).
-#   enamel  Gc = 13.1 J/m2 = 0.0131 MPa.mm   (K_IC ~ 1.0 MPa sqrt(m): Bechtle et
-#           al. 2010; the value used by Yang et al., JMBBM 157 (2024), Table 1)
-#   dentin  Gc = 161.8 J/m2 = 0.1618 MPa.mm  (K_IC ~ 1.8 MPa sqrt(m): Imbeni et
-#           al. 2005; Yang et al. 2024, Table 1)
-# The PD paper's own s0-based pair (s0 = sqrt(5 G0/(9 K delta)) with the 0.45 mm
-# horizon: 0.0817 / 0.1575 MPa.mm) is what earlier runs used; restore it with
-#   PFF_GC_ENAMEL=0.0817 PFF_GC_DENTIN=0.1575 PFF_FT_ENAMEL=100.9 PFF_FT_DENTIN=63.4
-# Note the dentin/enamel ratio of 12: Yang et al. report that with it the AT2
-# crack arrests at the DEJ.  With PF-CZM the DEJ crossing is set by the dentin
-# strength below, so the enamel crack arrests and the dentin cracks later, at
-# a higher load -- the clinical "cracked tooth" sequence.
 GC_ENAMEL = float(os.environ.get('PFF_GC_ENAMEL', 0.0131))
 GC_DENTIN = float(os.environ.get('PFF_GC_DENTIN', 0.1618))
-# Nonfracturing tissues receive a large numerical Gc in addition to d=0 nodal BCs.
 GC_NONFRACTURE = float(os.environ.get('PFF_GC_NONFRACTURE', 1000.0))
-# Tensile strength per tissue (PF-CZM needs f_t; AT1/AT2 ignore it).
-#   enamel  40 MPa  (measured UTS 11-42 MPa, Giannini et al. 2004; the AT2
-#           model of Yang et al. 2024 with l0 = 0.1 mm has sigma_c = 34 MPa)
-#   dentin  60 MPa  (bulk UTS 50-100 MPa, Sano et al. 1994; Yang's sigma_c = 58)
-# The PD paper's critical stretch s0 (Table 1) maps to f_t = E*s0 = 100.9 /
-# 63.4 MPa; PFF_S0_* are kept so that pair can be restored (see above).
-# The resulting characteristic lengths l_ch = E Gc / f_t^2 are 0.69 mm (enamel)
-# and 0.81 mm (dentin); PF-CZM softening is stable for l < 2 l_ch / pi = 0.44 /
-# 0.52 mm, so l = 0.25 mm is comfortably inside that regime.
 S0_ENAMEL = float(os.environ.get('PFF_S0_ENAMEL', 1.2e-3))
 S0_DENTIN = float(os.environ.get('PFF_S0_DENTIN', 3.5e-3))
 F_T_ENAMEL = float(os.environ.get('PFF_FT_ENAMEL', 40.0))
 F_T_DENTIN = float(os.environ.get('PFF_FT_DENTIN', 60.0))
-f_t = F_T_ENAMEL                      # kept for back-compatible reporting
+f_t = F_T_ENAMEL                    
 
 def _lame(E, nu):
     return E / (2. * (1. + nu)), E * nu / ((1 + nu) * (1 - 2 * nu))
@@ -130,9 +104,6 @@ MU_L, LMBDA_L = _lame(E_PDL, NU_PDL)
 MU_CB, LMBDA_CB = _lame(E_CANCEL, NU_CANCEL)
 MU_CT, LMBDA_CT = _lame(E_CORT, NU_CORT)
 
-# Length scale.  0.25 mm is ~1/3 of l_ch for both tissues (regularisation, not
-# a material parameter in PF-CZM), resolves the 1.2-1.5 mm enamel cap with
-# ~5 elements across the band at h = l/2-l/3, and matches the runs since 1406.
 l = float(os.environ.get('PFF_L', 0.25))
 
 
@@ -153,26 +124,9 @@ A1_ENAMEL = _a1(E_ENAMEL, GC_ENAMEL, F_T_ENAMEL)
 A1_DENTIN = _a1(E_DENTIN, GC_DENTIN, F_T_DENTIN)
 H_CRIT_ENAMEL = F_T_ENAMEL ** 2 / (2. * E_ENAMEL)
 H_CRIT_DENTIN = F_T_DENTIN ** 2 / (2. * E_DENTIN)
-# Residual stiffness. At d->1 the element stiffness falls to K_RES*E; 1e-8 spans
-# 8 orders of magnitude across the mesh and makes the Jacobi-preconditioned CG
-# very ill-conditioned. Raise to 1e-6 if the solve produces NaN.
+
 K_RES = float(os.environ.get('PFF_K_RES', 1e-8))
 
-# --- idealised full premolar + supporting bone geometry [mm] ---
-# Sized as an average maxillary second premolar (crown 8 mm tall, 9 mm
-# bucco-lingual (x) by 7 mm mesio-distal (z), root 14 mm) and checked against
-# the paper's Figs 4-5, where the 4 mm ball is the scale bar: crown height
-# ~0.8 x crown width, root ~1.3 x, pulp horn ~0.6 x below the cusps, alveolar
-# crest ~1.5 mm below the CEJ, bone block ~1.2 x crown width.  The previous
-# outline had a 12 mm crown, a 9 mm root, cusp tips only 3.2 mm apart and --
-# decisive for a phase-field model -- the ball bearing on a 27 deg cusp
-# incline.  Yang et al. (JMBBM 157 (2024) 106655, Fig. 14) show with an AT2
-# phase field on a CBCT molar that the crack starts at the fissure tip for a
-# cusp angle of 50 deg (incline 40 deg from horizontal) but at the BALL
-# CONTACT / DEJ for 70 deg (incline 20 deg): "stress no longer concentrates at
-# the concavity".  That is precisely where earlier runs nucleated.  The
-# fissure is therefore a 45 deg V (cusp angle 45 deg) wide enough for the ball
-# to bear on its flanks, with a rounded floor.  Cusp tips stay at y = 20.
 GEOM = dict(H=20.0, W=9.0, y_cej=12.0, y_apex=-2.0)
 H_TOOTH, Y_CEJ, Y_APEX = GEOM['H'], GEOM['y_cej'], GEOM['y_apex']
 Z_MIN = float(os.environ.get('PFF_Z_MIN', -3.5))
@@ -180,46 +134,26 @@ Z_MAX = float(os.environ.get('PFF_Z_MAX', 3.5))
 if Z_MAX <= Z_MIN:
     raise ValueError('PFF_Z_MAX must be greater than PFF_Z_MIN')
 LZ = Z_MAX - Z_MIN
-# Enamel: T_ENAMEL over the occlusal part of the crown, tapering to
-# T_ENAMEL_CEJ over the cervical ENAMEL_TAPER_H mm (real enamel thins to
-# nothing at the CEJ).
 T_ENAMEL = float(os.environ.get('PFF_T_ENAMEL', 1.2))
 T_ENAMEL_CEJ = float(os.environ.get('PFF_T_ENAMEL_CEJ', 0.3))
 ENAMEL_TAPER_H = float(os.environ.get('PFF_ENAMEL_TAPER_H', 3.0))
 PDL_THICKNESS = float(os.environ.get('PFF_PDL_THICKNESS', 0.20))
-# The alveolar crest sits below the CEJ (paper Fig. 5a shows a band of exposed
-# root dentin between enamel and bone).  The old model put the bone top AT the
-# CEJ, which is also what produced the re-entrant-edge mode there.
 Y_CREST = float(os.environ.get('PFF_Y_CREST', Y_CEJ - 1.5))
 BONE_X_HALF = float(os.environ.get('PFF_BONE_X_HALF', 6.0))
 BONE_BOTTOM = float(os.environ.get('PFF_BONE_BOTTOM', -5.0))
 CORTICAL_THICKNESS = float(os.environ.get('PFF_CORTICAL_THICKNESS', 1.0))
-# Pulp horns 5 mm below the cusp tips (paper Fig. 5b: ~0.6 x crown width), so
-# the crack crosses ~1.2 mm enamel + ~2 mm dentin before reaching the pulp, as
-# in Fig. 5 (0.24 mm: through enamel; 0.30 mm: at the pulp).
 PULP_TOP = float(os.environ.get('PFF_PULP_TOP', H_TOOTH - 5.0))
 PULP_BOTTOM = Y_APEX + 1.5
-# Figure 5 concerns crown fracture.  Keeping the phase field above the
-# cemento-enamel junction removes the non-physical re-entrant-edge mode at the
-# alveolar crest while leaving the elastic root/PDL/bone load path intact.
 FRACTURE_Y_MIN = float(os.environ.get('PFF_FRACTURE_Y_MIN', Y_CEJ + 1.0))
-# Rounded fissure floor.  A perfectly sharp V-notch (zero tip radius) is a
-# stress singularity that made the crack initiate at 297 N / delta=0.074 mm
-# instead of the paper's 693 N / 0.21 mm.  Real occlusal fissures are rounded,
-# typically 0.1-0.3 mm.  Set PFF_FISSURE_RADIUS=0 to restore the sharp notch.
+
 FISSURE_RADIUS = float(os.environ.get('PFF_FISSURE_RADIUS', 0.20))
-# V-fissure between the two cusps: vertex FISSURE_DEPTH below the tips, tips at
-# x = +-CUSP_HALF_SPAN.  Default 1.7 / 1.7 -> 45 deg incline: the R = 2 mm ball
-# bears on the flanks at |x| = 2 sin 45 = 1.41 mm, inside the V and 0.8 mm
-# above the floor, so the wedge action splits the crown at the fissure.
-# PFF_FISSURE_DEPTH=0.62 reproduces Yang's flat 70 deg case (incline 20 deg),
-# where the crack is expected to move to the contact point instead.
+
 FISSURE_DEPTH = float(os.environ.get('PFF_FISSURE_DEPTH', 1.7))
 CUSP_HALF_SPAN = float(os.environ.get('PFF_CUSP_HALF_SPAN', 1.7))
 if not 0.5 <= CUSP_HALF_SPAN <= 2.4:
     raise ValueError('PFF_CUSP_HALF_SPAN must lie in [0.5, 2.4] mm for this outline')
 CUSP_INCLINE_DEG = float(onp.degrees(onp.arctan2(FISSURE_DEPTH, CUSP_HALF_SPAN)))
-CUSP_ANGLE_DEG = 90.0 - CUSP_INCLINE_DEG        # Yang et al. 2024: from the vertical
+CUSP_ANGLE_DEG = 90.0 - CUSP_INCLINE_DEG        
 _FISSURE_V = (0.0, H_TOOTH - FISSURE_DEPTH)
 _FISSURE_A = (-CUSP_HALF_SPAN, H_TOOTH)
 _FISSURE_B = (CUSP_HALF_SPAN, H_TOOTH)
@@ -259,9 +193,7 @@ CUSP_TIP = (CUSP_HALF_SPAN, H_TOOTH)
 # Fissure "column" used by the per-step H_fis report and the diagnostics.
 FISSURE_COL_HALF_X = 0.45
 FISSURE_COL_Y_MIN = FISSURE_XY[1] - 1.3
-# Right half of the outline beyond the cusp tip: outer cusp slope down to the
-# shoulder, crown side (max half-width 4.5 at y = 16.4), CEJ at 4.0, root
-# tapering to the apex.
+
 _CROWN_TOP_RIGHT = [(CUSP_HALF_SPAN + 0.9, 19.6), (CUSP_HALF_SPAN + 1.8, 18.8)]
 _CROWN_SIDE_RIGHT = [(4.2, 17.6), (4.5, 16.4), (4.4, 14.5), (4.1, 12.6), (4.0, Y_CEJ)]
 _ROOT_RIGHT = [(3.4, 8.5), (2.9, 5.5), (2.2, 2.0), (1.2, -1.0), (0.0, Y_APEX)]
@@ -274,10 +206,7 @@ def outline_half_width(y):
 
 
 ROOT_HALF_CREST = outline_half_width(Y_CREST)
-# Occlusal polyline the ball can touch: left shoulder -> cusp tip -> V flank ->
-# rounded floor -> V flank -> cusp tip -> right shoulder.  Its segments are the
-# contact-surface locators (arc chords included, so the floor is loaded if the
-# ball ever reaches it).
+
 _OCCLUSAL_PROFILE = onp.asarray(
     [(-x, y) for (x, y) in reversed(_CROWN_TOP_RIGHT)] + [_FISSURE_A]
     + [tuple(p) for p in _FISSURE_ARC] + [_FISSURE_B] + _CROWN_TOP_RIGHT,
@@ -307,47 +236,14 @@ def _ball_touch(profile, R, n=801):
 
 
 _Y0_AUTO, _TOUCH = _ball_touch(_OCCLUSAL_PROFILE, BALL_RADIUS)
-# Smallest centre height whose spherical surface does not penetrate the cusp
-# profile at delta=0 -- computed from the profile (it was 21.4361 mm for the
-# old outline, hard-coded).
+
 BALL_CENTER_Y0 = float(os.environ.get('PFF_BALL_CENTER_Y0', _Y0_AUTO))
 CONTACT_X, CONTACT_Y = abs(_TOUCH[0]), _TOUCH[1]
-# Contact law, following the paper's sec. 2.3: a SHORT-RANGE spring that acts
-# once a surface point is within d_s of the ball (Eq. 14, d_s = 0.3 mm), not a
-# hard penalty at zero gap.  A hard rigid-on-rigid contact gives a Hertzian
-# pressure peak in the GPa range whose edge tension (1-2nu)p0/3 exceeds
-# f_t=101 MPa already at ~50 N -- an earlier run (CZM, Gc=82/158, every other fix in)
-# still formed a Hertzian RING crack at the contact edge at 339 N instead of a
-# fissure crack.  Smearing the contact over d_s spreads the load over a patch
-# of radius ~sqrt(2 R d_s) ~ 1.1 mm and removes that concentration; the paper
-# says explicitly the 4 mm ball was chosen "to prevent stress concentration
-# from directly affecting crack propagation".
-# Penalty 5e3 N/mm^3: set by an elastic sweep (nucleation_map.py, k = 2e3 /
-# 5e3 / 1e4 / 2e4 with d_s = 0.3).  At 5e3 the reaction is 606 N at delta =
-# 0.21 mm (paper: 693 N), the FISSURE reaches the CZM threshold between delta =
-# 0.21 and 0.24 (paper initiation 0.21), and the contact edge stays below
-# threshold until 0.25 (fissure/contact ratio 1.23 at 0.21).  2e3 was too soft
-# (385 N, fissure 0.39); the hard contact 2.5e5 gave 881 N and a Hertzian ring
-# crack at the contact edge (an earlier run).  PFF_CONTACT_DS=0 PFF_CONTACT_PENALTY=2.5e5
-# restores the old hard contact.
+
 CONTACT_DS = float(os.environ.get('PFF_CONTACT_DS', 0.30))                # mm
 CONTACT_PENALTY = float(os.environ.get('PFF_CONTACT_PENALTY', 5.0e3))     # N/mm^3
-# The ball starts d_s ABOVE the just-touching height, so that force onset
-# (surface point enters the d_s shell) is still at delta = 0.
 BALL_Y_START = BALL_CENTER_Y0 + CONTACT_DS
 R_EFF = BALL_RADIUS + CONTACT_DS          # radius at which the spring engages
-# Optional: forbid damage inside the ball's contact shadow.  Once the occlusal
-# surface can damage, the penalty traction acts on material that softens under
-# it (damage -> deeper penetration -> larger traction -> more damage).  The
-# paper's initiation site is the fissure at x=0, which lies OUTSIDE the contact
-# band around |x| = CONTACT_X, so this guard does not suppress it.  Default off.
-# Optional pre-existing crack, as in the paper's sec. 4.2 Cases I-III, where
-# initial cracks are "represented by initially broken bonds within the
-# prescribed crack region".  PFF_SEED_CRACK=1 plants the phase-field equivalent:
-# the irreversible history H is set high in a thin plane so d -> 1 there.
-# Default is OFF -- Fig. 5 itself is the INTACT tooth.
-# Case-III of the paper = a crack on the occlusal surface at the central
-# fissure, running into dentine: that is SEED_DEPTH ~ 2-3 mm.
 SEED_CRACK = os.environ.get('PFF_SEED_CRACK', '0') == '1'
 SEED_DEPTH = float(os.environ.get('PFF_SEED_DEPTH', 1.0))      # mm below fissure
 SEED_HALF_THICK = float(os.environ.get('PFF_SEED_HALF_THICK', 0.0))  # 0 -> h/2
@@ -355,92 +251,46 @@ SEED_HALF_Z = float(os.environ.get('PFF_SEED_HALF_Z', 1e9))    # mesio-distal ha
 SEED_H_FACTOR = float(os.environ.get('PFF_SEED_H_FACTOR', 1e3))  # x H_crit
 
 CONTACT_NO_DAMAGE = os.environ.get('PFF_CONTACT_NO_DAMAGE', '0') == '1'
-# Diagnostic: pin d=0 everywhere, leaving pure elasticity + penalty contact.  If
-# a run still produces NaN with this set, the fault is in the contact/elastic
-# tangent, not in the phase field.
+
 ELASTIC_ONLY = os.environ.get('PFF_ELASTIC_ONLY', '0') == '1'
-# Margin MUST stay below the fissure's clearance from the ball (printed at
-# start-up; 0.296 mm for the old outline, ~0.5 mm for the 45 deg V), or the
-# guard swallows the fissure floor -- the very site where Fig. 5 nucleates
-# the crack.  0.30 did exactly that on the old outline, by 4 microns.
+
 CONTACT_SHADOW_MARGIN = float(os.environ.get('PFF_CONTACT_SHADOW_MARGIN', 0.05))
-# VOLUMETRIC guard.  Pinning only the surface nodes does not work: the damage
-# simply forms one band-width (2 l) BENEATH the pinned layer.  An earlier run (l=0.25,
-# h=0.125) put its damage at |x|~1.5, y in [18.95,19.47] -- the cusp incline,
-# 0.48 mm = 2 l below the occlusal surface, not at the fissure.  Refining makes
-# it worse, because the contact-edge concentration sharpens with h while the
-# rounded fissure does not.  So exclude a SHELL of depth ~3 l under the contact
-# band, keyed on radius (not gap) so the fissure at rho < RHO_MIN stays free.
-# PFF_CONTACT_SHADOW_DEPTH=0 restores the old surface-only guard.
+
 CONTACT_SHADOW_DEPTH = float(os.environ.get('PFF_CONTACT_SHADOW_DEPTH', 3.0 * l))
 CONTACT_SHADOW_RHO_MIN = float(os.environ.get('PFF_CONTACT_SHADOW_RHO_MIN', 0.30))
 CONTACT_SHADOW_RHO_MAX = float(os.environ.get('PFF_CONTACT_SHADOW_RHO_MAX',
                                               CONTACT_X + 1.2))   # contact + patch
-# Solver iteration caps.  These dominate the cost: every stagger runs a Newton
-# loop whose iterations each do up to PFF_CG_MAXITER CG iterations, plus a
-# projected-Jacobi damage solve of up to PFF_PG_MAXIT sweeps.  Lower them for a
-# quick smoke test; the defaults are the production values.
+
 NEWTON_MAX = int(os.environ.get('PFF_NEWTON_MAX', 20))
 CG_MAXITER = int(os.environ.get('PFF_CG_MAXITER', 8000))
-# 300 was never enough: an earlier run ended every step at 300/300 with the sweep
-# still changing d by 5e-2 (tolerance 1e-7), i.e. an unconverged damage field.
 PG_MAXIT = int(os.environ.get('PFF_PG_MAXIT', 2000))
-# Damage sub-solver for CZM/AT1.  'pg' = projected Jacobi (the original).  It
-# converges fast only while the LOCAL term dominates; with the paper-derived
-# Gc = 82 J/m2 the gradient term Gc*l*lap(d) is 6.8x stronger than at Gc = 12
-# and Jacobi crawls -- an earlier run had 109 fissure nodes 4.6x over threshold, all
-# admissible, and d never passed 0.021 in 300 sweeps.  'newton' uses the same
-# Newton+CG path as AT2 (with the [0,1] clip), which is insensitive to that.
-# An earlier run settled it: Newton+CG gives d=1 over 49% of the enamel at delta=0.002
-# (CZM's softening tangent is indefinite; CG diverges silently).  Stay on pg.
+
 DAMAGE_SOLVER = os.environ.get('PFF_DAMAGE_SOLVER', 'pg').lower()
 assert DAMAGE_SOLVER in ('pg', 'newton'), "PFF_DAMAGE_SOLVER must be pg|newton"
 USE_PG = DAMAGE_SOLVER == 'pg' and MODEL in ('CZM', 'AT1')
 CG_TOL = float(os.environ.get('PFF_CG_TOL', 1e-4))
-# Crack driving force for the history H: 'rankine' (max principal effective
-# stress, PF-CZM standard, zero in compression) or 'spectral' (Miehe strain
-# split, which damages the contact zone -- see Elasticity.psi_plus).
+
 DRIVING = os.environ.get('PFF_DRIVING', 'rankine').lower()
 assert DRIVING in ('rankine', 'spectral'), "PFF_DRIVING must be rankine|spectral"
-# Cap on the irreversible history H, in multiples of each tissue's H_crit.
-# H is built from the EFFECTIVE (undegraded) stress, so inside a fully open
-# crack the strain is huge and the effective stress with it: an earlier run reported
-# H/H_crit at the fissure growing 18 -> 1.2e4 -> 1.4e5 -> 9.6e7 -> 4.2e9.  A
-# quadrature point that absurd drags every node of its element with it, which
-# is what turned the clean planar crack at delta=0.064 into a diffuse blob by
-# delta=0.104.  d -> 1 needs only H = (2 l_ch / (pi l))^2 ~ 3 x H_crit, so a cap
-# An earlier run's INTACT fissure notch reached a genuine elastic 18.6 x H_crit at
-# delta=0.004, so the cap must sit well above that: 100 preserves every real
-# stress concentration while cutting the open-crack artefact by seven orders.
-# PFF_H_CAP=0 disables the cap.
+
 H_CAP = float(os.environ.get('PFF_H_CAP', 100.0))
-# Freeze H once a point is fully broken.  A cap alone still lets an open crack
-# sit at the cap value forever and bleed damage into its neighbours through the
-# shared element nodes; a broken point has no meaningful driving force left, so
-# its history simply stops updating.  PFF_D_FREEZE=1 disables the freeze.
+
 D_FREEZE = float(os.environ.get('PFF_D_FREEZE', 0.99))
-# Stop once the specimen has failed: further steps only smear damage through the
-# remaining ligament at a load of ~0 (an earlier run spent 11 h of wall clock there).
+
 STOP_AFTER_FAILURE = os.environ.get('PFF_STOP_AFTER_FAILURE', '1') == '1'
 STOP_LOAD_FRAC = float(os.environ.get('PFF_STOP_LOAD_FRAC', 0.05))
-# Per-iteration progress lines from inside the jitted solver (Newton residual,
-# stagger change).  A step of this size can be silent for 30-60 min otherwise.
+
 VERBOSE = os.environ.get('PFF_VERBOSE', '1') == '1'
 DELTA_MAX = float(os.environ.get('PFF_DELTA_MAX', 0.34))
 DELTA_STEP = float(os.environ.get('PFF_DELTA_STEP', 0.01))
 FIG5_TARGETS = onp.array([0.21, 0.24, 0.30, 0.34])
-# Uniform mesh. Production default gives l/h=3; use 4 for a convergence run.
 COARSE = os.environ.get('PFF_COARSE', '0') == '1'
 H_OVER_L = float(os.environ.get('PFF_H_OVER_L', 3.0))
 H_UNIFORM = float(os.environ.get('PFF_H', l / H_OVER_L))
 if COARSE:
     H_UNIFORM = float(os.environ.get('PFF_H', 1.0))
 H_FINE = H_UNIFORM
-# The phase-field band only has to be resolved where damage is admissible (the
-# crown).  Meshing the whole bone block at l/3 as well is what makes the default
-# production run ~3M tets / ~2M u-DOFs, i.e. tens of GB for the assembled
-# operator alone.  PFF_H_BONE coarsens everything below the crown box; it
-# defaults to H_UNIFORM, so the uniform mesh is still the default.
+
 H_COARSE = float(os.environ.get('PFF_H_BONE', H_UNIFORM))
 
 
@@ -511,8 +361,6 @@ def _segment_surface_locator(a_host, b_host):
     return locator
 
 
-# Keep the planes separate.  A single union locator can accidentally select
-# internal tetrahedron faces whose vertices sit on two adjoining cusp planes.
 OCCLUSAL_LOCATION_FNS = [_segment_surface_locator(a, b) for a, b in zip(_OCC_A, _OCC_B)]
 
 
@@ -572,9 +420,7 @@ def tissue_masks(P):
     inside_outer_root = MplPath(_ccw(outer_root_outline())).contains_points(
         xy, radius=1e-9)
 
-    # Pulp: a canal widening into the chamber, with a domed roof whose apex is
-    # the pulp horn at PULP_TOP.  Half-axes in x (bucco-lingual) and z
-    # (mesio-distal) grow from 0.5/0.6 mm at the apical end to 1.6/2.0 mm.
+
     s = onp.clip((y - PULP_BOTTOM) / max(PULP_TOP - 2.0 - PULP_BOTTOM, 1e-9), 0.0, 1.0)
     ax = 0.5 + 1.1 * s
     az = 0.6 + 1.4 * s
@@ -646,17 +492,6 @@ class Displacement(Field):
         zmid = 0.5 * (Z_MIN + Z_MAX)
 
         def rigid_ball_contact(u, x, delta):
-            # Gap measured along the sphere NORMAL (true signed distance), not
-            # vertically.  The old form took a vertical overlap but applied the
-            # traction along n, giving a tangent K*(n (x) e_y) that is NOT
-            # symmetric -- measured at 1.5e-3 relative asymmetry -- while the
-            # step is solved with CG, which assumes symmetry.  That produced
-            # inf/NaN once enough contact points sat away from the ball's
-            # bottom, and got worse with mesh refinement.  Here the leading
-            # tangent term is -K n (x) n, which is symmetric, and the vertical
-            # measure's overestimate of penetration away from the bottom is
-            # gone.  BALL_CENTER_Y0 is unchanged: both measures agree at zero
-            # penetration, so the just-touching height BALL_CENTER_Y0 is unchanged.
             xd = x + u
             r = np.array([xd[0],
                           xd[1] - (BALL_Y_START - delta),
@@ -784,10 +619,6 @@ def tooth_mesh_3d(h_fine, h_coarse, Lz):
         if not bone_cut or not pdl_cut:
             raise RuntimeError('Gmsh failed to construct conforming bone/PDL volumes')
 
-        # Imprint matching interface surfaces and shared nodes on every volume.
-        # Capture fragment's output map (rather than discarding it) so the tooth/
-        # PDL/bone volumes can be tagged as gmsh physical groups by their final
-        # (possibly renumbered) entity tags.
         frag_input = [(3, tooth_volume)] + pdl_cut + bone_cut
         frag_out, frag_map = gmsh.model.occ.fragment(frag_input, [])
         gmsh.model.occ.synchronize()
@@ -799,10 +630,7 @@ def tooth_mesh_3d(h_fine, h_coarse, Lz):
         for name, tags in vol_tags.items():
             gmsh.model.addPhysicalGroup(3, tags, name=name)
 
-        # Boundary surfaces owned by exactly one volume are that volume's free
-        # (exterior) surface; surfaces owned by two are the interface between
-        # them (tooth/PDL, PDL/bone) -- read directly off gmsh's own topology
-        # rather than re-deriving BC/contact regions from geometry thresholds.
+
         owners = {}
         for name, tags in vol_tags.items():
             for vt in tags:
@@ -817,9 +645,6 @@ def tooth_mesh_3d(h_fine, h_coarse, Lz):
         for name, surfs in surface_groups.items():
             gmsh.model.addPhysicalGroup(2, surfs, name=name)
 
-        # h_fine inside the fracture-admissible crown, h_coarse elsewhere.  With
-        # h_coarse == h_fine (the default) the box still covers the whole model
-        # and the mesh stays uniform.
         f = gmsh.model.mesh.field.add('Box')
         gmsh.model.mesh.field.setNumber(f, 'VIn', h_fine)
         gmsh.model.mesh.field.setNumber(f, 'VOut', h_coarse)
@@ -844,8 +669,7 @@ def tooth_mesh_3d(h_fine, h_coarse, Lz):
         elem_tags, enodes = gmsh.model.mesh.getElementsByType(4)   # 4 = TET4
         cells = tag2idx[enodes.reshape(-1, 4)].astype(onp.int32)
 
-        # Cell field: which gmsh physical volume (tooth/PDL/bone) each tet came
-        # from, read straight off the physical groups tagged above.
+   
         order_e = onp.argsort(elem_tags)
         sorted_etags = elem_tags[order_e]
 
@@ -890,9 +714,7 @@ def contact_shadow(P, delta):
     surface = (rho2 < R_EFF ** 2) & (gap <= CONTACT_SHADOW_MARGIN)
     if CONTACT_SHADOW_DEPTH <= 0.0:
         return surface
-    # Everything within CONTACT_SHADOW_DEPTH of the occlusal surface whose
-    # in-plane radius falls in the contact annulus.  RHO_MIN keeps the fissure
-    # (rho = 0) admissible; the paper's crack starts there.
+
     rho = onp.sqrt(rho2)
     depth = dist_to_outline(P[:, :2])
     volume = ((rho >= CONTACT_SHADOW_RHO_MIN) & (rho <= CONTACT_SHADOW_RHO_MAX)
@@ -1171,12 +993,7 @@ def get_staggered_stepper(field_u, field_d, d_fixed_idx, max_stagger=10, ms_tol=
             if VERBOSE:
                 jax.debug.print("    stagger {s}: du/u {eu:.2e}  dd/d {ed:.2e}  max d {md:.4f}"
                                 "  pg {pi}", s=s + 1, eu=eu, ed=ed, md=np.max(sd_new), pi=pg_it)
-            # Convergence is judged on the DAMAGE change only.  u is always the
-            # converged solution for the d it was solved with, so once d stops
-            # changing there is nothing left to iterate.  The old max(eu, ed)
-            # always forced a second stagger (eu ~ 1 on the first pass, since u
-            # moves from the previous load level), i.e. a second full Newton+CG
-            # solve of the same problem -- doubling every elastic step.
+
             return (su_new, sd_new, hist_new, ed, s + 1, pg_it, pg_chg)
         def cond2(state):
             return cond(state[:5])
@@ -1216,12 +1033,7 @@ def main():
     SAVE_EVERY = int(os.environ.get('PFF_SAVE_EVERY', 1 if COARSE else 5))
     MAX_STAGGER = int(os.environ.get('PFF_MAX_STAGGER', 20))
     levels = onp.arange(DELTA_STEP, DELTA_MAX + 0.5 * DELTA_STEP, DELTA_STEP)
-    # Optional local refinement window: replace the coarse levels inside
-    # [PFF_REFINE_START, PFF_REFINE_END] with a finer PFF_REFINE_STEP spacing,
-    # leaving the schedule elsewhere untouched. Every level inside the window
-    # is also force-saved (see REFINE_WINDOW use below), regardless of
-    # PFF_SAVE_EVERY, so the refined region isn't thinned out by the normal
-    # save cadence.
+
     REFINE_START = os.environ.get('PFF_REFINE_START')
     REFINE_END = os.environ.get('PFF_REFINE_END')
     REFINE_STEP = os.environ.get('PFF_REFINE_STEP')
@@ -1292,11 +1104,7 @@ def main():
           f"damage threshold H_crit = f_t^2/2E = "
           f"{H_CRIT_ENAMEL:.4f}/{H_CRIT_DENTIN:.4f} MPa")
     if MODEL == 'CZM':
-        # Linear-softening PF-CZM: the point response H(d) is monotone (stable,
-        # gradual damage) only for l < 2 l_ch / pi.  Above that the H needed to
-        # hold damage FALLS with d -- snap-back: once threshold is crossed the
-        # point jumps to d=1 and the crown fails in one step (earlier runs at
-        # l=0.5, l_ch=0.675).  H(d->1)/H_crit = (2 l_ch/(pi l))^2.
+
         l_snap = 2.0 * min(L_CH_ENAMEL, L_CH_DENTIN) / onp.pi
         hd1 = (2.0 * min(L_CH_ENAMEL, L_CH_DENTIN) / (onp.pi * l)) ** 2
         if l >= l_snap:
@@ -1413,19 +1221,14 @@ def main():
          pg_it, pg_chg) = stepper(
             sol_u, sol_d, history_old, fixed_idx, fixed_vals_zero,
             zero_f, mat_quad, gc_quad, a1_quad, delta)
-        # The SOLVER'S history H, normalised by each tissue's onset threshold.
-        # Written to every VTU so the driving force the damage equation actually
-        # sees can be compared with the damage it produced -- an earlier run had an
-        # externally computed psi+/H_crit of 4.6 at the fissure yet d = 0.02.
+
         _H = onp.asarray(history_old).max(axis=1)
         _Hc = onp.where(cell_masks['enamel'], H_CRIT_ENAMEL,
                         onp.where(cell_masks['dentin'], H_CRIT_DENTIN, onp.inf))
         H_ratio = _H / _Hc
         h_fis = float(onp.max(H_ratio[fissure_cells])) if fissure_cells.any() else 0.0
 
-        # Fail fast on a destroyed solve.  Without this the NaN propagates and
-        # every later step exits its while_loop instantly, so the run "finishes"
-        # and writes a full set of all-NaN VTUs plus an empty diagnostics plot.
+
         u_bad = int(onp.count_nonzero(~onp.isfinite(onp.asarray(sol_u))))
         d_bad = int(onp.count_nonzero(~onp.isfinite(onp.asarray(sol_d))))
         if u_bad or d_bad:
