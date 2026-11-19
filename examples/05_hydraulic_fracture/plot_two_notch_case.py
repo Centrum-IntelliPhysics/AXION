@@ -1,6 +1,3 @@
-"""Geometry and computed phase field at t = 2.5 s of the two-notch case
-(Zhou et al. 2023, Fig. 18). Reads the output folder of hydraulic_fracture.py."""
-
 import argparse
 import hashlib
 import os
