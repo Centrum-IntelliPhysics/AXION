@@ -1,5 +1,3 @@
-"""Plot Zhou et al. (2023) Figs. 19-21 varying-stress validation case."""
-
 import argparse
 import os
 
