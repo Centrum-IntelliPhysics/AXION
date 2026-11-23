@@ -102,3 +102,11 @@ python -m axion.distributed        # multi-GPU kernels on 4 emulated CPU devices
 ## License
 
 Axion is released under the [MIT License](LICENSE).
+
+## Contact
+
+For more information or questions, please contact:
+
+- [Wei Wang](mailto:wwang198@jh.edu)
+- [Meenu Krishnan U.](mailto:ukrishn4@jh.edu)
+- [Somdatta Goswami](mailto:somdatta@jhu.edu)
